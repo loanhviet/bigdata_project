@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data files (quá lớn, không nên commit)
+data/*.jsonl
+data/*.xml
+share/*.jsonl
+
+# MapReduce output files
+mapreduce/*.txt
+mapreduce/wordcount_*.txt
+mapreduce/*_result.txt
+mapreduce/*_merged.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# Hadoop/HDFS temporary files
+*.crc
+._SUCCESS
+
+# Elasticsearch
+.es_data/
+
+# Environment variables
+.env
+.env.local
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Streamlit
+.streamlit/
+
