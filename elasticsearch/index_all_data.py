@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Index MapReduce output data to Elasticsearch
+Index all data to Elasticsearch:
+1. Wikipedia documents (from cleaned data)
+2. MapReduce results (wordcount, trends, categories)
 """
 from elasticsearch import Elasticsearch, helpers
 import subprocess
 import sys
 import re
+import json
 
 # Kết nối ES
 es = Elasticsearch(['http://localhost:9200'])
@@ -26,6 +29,76 @@ def load_keywords(filepath='mapreduce/keywords.txt'):
     return keywords
 
 KEYWORDS = load_keywords()
+
+# ============== INDEX 0: WIKI DOCS (Full-text search) ==============
+def index_wiki_docs():
+    index_name = "wiki_docs"
+    
+    if es.indices.exists(index=index_name):
+        es.indices.delete(index=index_name)
+        print(f"Deleted old index: {index_name}")
+    
+    es.indices.create(index=index_name, body={
+        "settings": {
+            "number_of_shards": 3,
+            "number_of_replicas": 1,
+            "analysis": {
+                "analyzer": {
+                    "vietnamese": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": ["lowercase", "asciifolding"]
+                    }
+                }
+            }
+        },
+        "mappings": {
+            "properties": {
+                "page_id": {"type": "keyword"},
+                "title": {
+                    "type": "text",
+                    "analyzer": "vietnamese",
+                    "fields": {"keyword": {"type": "keyword"}}
+                },
+                "timestamp": {"type": "date", "format": "iso8601"},
+                "categories": {"type": "keyword"},
+                "text": {"type": "text", "analyzer": "vietnamese"}
+            }
+        }
+    })
+    
+    print(f"Created index: {index_name}")
+    
+    def read_data():
+        cmd = "hdfs dfs -cat /data/wiki/clean/docs/part-*"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
+        
+        count = 0
+        for line in result.stdout.strip().split('\n'):
+            if line.strip():
+                try:
+                    doc = json.loads(line)
+                    count += 1
+                    yield {
+                        "_index": index_name,
+                        "_id": doc.get("page_id", count),
+                        "_source": {
+                            "page_id": doc.get("page_id"),
+                            "title": doc.get("title"),
+                            "timestamp": doc.get("timestamp"),
+                            "categories": doc.get("categories", []),
+                            "text": doc.get("text", "")
+                        }
+                    }
+                    if count % 1000 == 0:
+                        print(f"  Processed {count} documents...")
+                except:
+                    pass
+    
+    success, failed = helpers.bulk(es, read_data(), raise_on_error=False, stats_only=True)
+    print(f"Indexed {success} documents to {index_name}")
+    if failed:
+        print(f"Failed: {failed}")
 
 # ============== INDEX 1: WORDCOUNT ==============
 def index_wordcount():
@@ -95,7 +168,7 @@ def index_trend_kwlist():
     print(f"Created index: {index_name}")
     
     def read_data():
-        cmd = "hdfs dfs -cat /data/wiki/mr/trend_kwlist/part-*"
+        cmd = "hdfs dfs -cat /data/wiki/mr/trend/part-*"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
         
         # Pattern: 2025-11website → year=2025, month=11, keyword=website
@@ -149,7 +222,7 @@ def index_cat_kwlist():
     print(f"Created index: {index_name}")
     
     def read_data():
-        cmd = "hdfs dfs -cat /data/wiki/mr/cat_kwlist/part-*"
+        cmd = "hdfs dfs -cat /data/wiki/mr/category_keyword/part-*"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
         
         for line in result.stdout.strip().split('\n'):
@@ -204,7 +277,7 @@ def index_cat_docs():
     print(f"Created index: {index_name}")
     
     def read_data():
-        cmd = "hdfs dfs -cat /data/wiki/mr/cat_docs/part-*"
+        cmd = "hdfs dfs -cat /data/wiki/mr/category_stats/part-*"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8')
         
         for line in result.stdout.strip().split('\n'):
@@ -228,20 +301,23 @@ def index_cat_docs():
 # ============== MAIN ==============
 if __name__ == "__main__":
     print("=" * 60)
-    print("Starting indexing process...")
+    print("INDEXING ALL DATA TO ELASTICSEARCH")
     print("=" * 60)
     
     try:
-        print("\n[1/4] Indexing WordCount...")
+        print("\n[0/5] Indexing Wikipedia documents...")
+        index_wiki_docs()
+        
+        print("\n[1/5] Indexing WordCount...")
         index_wordcount()
         
-        print("\n[2/4] Indexing Trend Keywords...")
+        print("\n[2/5] Indexing Trend Keywords...")
         index_trend_kwlist()
         
-        print("\n[3/4] Indexing Category Keywords...")
+        print("\n[3/5] Indexing Category Keywords...")
         index_cat_kwlist()
         
-        print("\n[4/4] Indexing Category Documents...")
+        print("\n[4/5] Indexing Category Documents...")
         index_cat_docs()
         
         print("\n" + "=" * 60)
@@ -250,9 +326,13 @@ if __name__ == "__main__":
         
         # Kiểm tra số lượng documents
         print("\nIndex Statistics:")
-        for idx in ["wiki_wordcount", "wiki_trend", "wiki_cat_kwlist", "wiki_cat_docs"]:
-            count = es.count(index=idx)['count']
-            print(f"  - {idx}: {count:,} documents")
+        indices = ["wiki_docs", "wiki_wordcount", "wiki_trend", "wiki_cat_kwlist", "wiki_cat_docs"]
+        for idx in indices:
+            try:
+                count = es.count(index=idx)['count']
+                print(f"  - {idx}: {count:,} documents")
+            except:
+                print(f"  - {idx}: (not found)")
     
     except Exception as e:
         print(f"\nERROR: {str(e)}")
